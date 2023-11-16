@@ -1,0 +1,102 @@
+---
+title: "VQ_Model"
+author: "Christian DeJong"
+date: "2023-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lpSolve)
+library(data.table)
+```
+
+### VQ Transportation Triangle Mini Model
+
+```{r}
+# Counts Pallets Transported per Product
+nLactosePalletsTrans <- 0
+nWpcTrans <- 0
+nCheeseTrans <- 0
+nSpaceCraftTrans <- 0
+nGoodPackTrans <- 0
+
+# Product Requirements to be Transported Daily
+lactoseReq <- 88
+WpcReq <- 38
+CheeseReq <- 360
+SpaceCraftReq <- 2
+GoodPackReq <- 2
+
+#Data Frame for each Trip, Number of Pallets, Total Pallets per Trip, Weight per Trip
+transport_df <- data.frame(Trip = integer(),
+                           Lactose_Pallets = integer(),
+                           WPC_Pallets = integer(),
+                           Cheese_Pallets = integer(),
+                           AMF_Space_Craft_Pallets = integer(),
+                           AMF_Good_Pack_Pallets = integer(),
+                           Total_Pallets = integer(),
+                           Total_Weight = integer())
+```
+
+```{r}
+#Counter for each trip iteration
+i <- 1
+
+#Loops until each Transportation Requirement is met
+while (nLactosePalletsTrans != lactoseReq || nWpcTrans != WpcReq || nCheeseTrans != CheeseReq || nSpaceCraftTrans != SpaceCraftReq || nGoodPackTrans != GoodPackReq) {
+  
+  #Create Constraint Matrix 
+  # Variable Order: x1, x2, x3, x4, x5 -- corresponding to: Lactose, WPC, Cheese, AMF Space Craft, AMF Good Pack
+  A <- matrix(c(2200, 1763, 720, 2000, 2670, # Weight Constraint per pallet
+              45, 45, 45, 45, 45, # Volume of Trailer Constraint
+              1, 0, 0, 0, 0, # Max pallets per trailer by product
+              0, 1, 0, 0, 0,
+              0, 0, 1, 0, 0,
+              0, 0, 0, 1, 0,
+              0, 0, 0, 0, 1,
+              1, 0, 0, 0, 0, # Daily Requirement Constraints
+              0, 1, 0, 0, 0,
+              0, 0, 1, 0, 0,
+              0, 0, 0, 1, 0,
+              0, 0, 0, 0, 1), 
+            byrow = TRUE, nrow = 12, ncol = 5)
+  
+  cost <- c(1, 1, 1, 1, 1)
+  rhs <- c(50730, 1067, 20, 24, 13.5, 19, 15, lactoseReq - nLactosePalletsTrans, WpcReq - nWpcTrans, CheeseReq - nCheeseTrans, SpaceCraftReq - nSpaceCraftTrans, GoodPackReq - nGoodPackTrans)
+  dir.const <- c("<=","<=","<=","<=","<=","<=","<=","<=","<=","<=","<=","<=")
+
+  # Maximizing Volume of the Trailer for optimal transportation of Products
+  lp_solution <- lp(direction = "max", objective.in = cost, const.mat = A, const.dir = dir.const, const.rhs = rhs, all.int = TRUE)
+  
+  # Calculates Weight of amount of each product in each trailer iteration
+  Lactose_Weight = lp_solution$solution[1] * 2200
+  WPC_Weight = lp_solution$solution[2] * 1763
+  Cheese_Weight = lp_solution$solution[3] * 720
+  AMF_Space_Craft_Weight = lp_solution$solution[4] * 2000
+  AMF_Good_Pack_Weight = lp_solution$solution[5] * 2670
+  
+  # Creates new row with lp_solution outputs and appends it to the data frame
+  new_row <- data.frame(Trip = i,
+                        Lactose_Pallets = lp_solution$solution[1],
+                        WPC_Pallets = lp_solution$solution[2],
+                        Cheese_Pallets = lp_solution$solution[3],
+                        AMF_Space_Craft_Pallets = lp_solution$solution[4],
+                        AMF_Good_Pack_Pallets = lp_solution$solution[5],
+                        Total_Pallets = lp_solution$solution[1] + lp_solution$solution[2] + lp_solution$solution[3] + lp_solution$solution[4] + lp_solution$solution[5],
+                        Total_Weight = Lactose_Weight + WPC_Weight + Cheese_Weight + AMF_Space_Craft_Weight + AMF_Good_Pack_Weight)
+
+  transport_df <- rbind(transport_df, new_row)
+  
+  #Trips + 1
+  i <- i + 1
+
+  #Counts Total Pallets transported for each product
+  nLactosePalletsTrans <- nLactosePalletsTrans + lp_solution$solution[1]
+  nWpcTrans <- nWpcTrans + lp_solution$solution[2]
+  nCheeseTrans <- nCheeseTrans + lp_solution$solution[3]
+  nSpaceCraftTrans <- nSpaceCraftTrans + lp_solution$solution[4]
+  nGoodPackTrans <- nGoodPackTrans + lp_solution$solution[5]
+}
+transport_df
+```
