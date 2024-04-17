@@ -5,13 +5,45 @@ date: "2023-11-08"
 output: html_document
 ---
 
+### Install Libraries
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(lpSolve)
 library(data.table)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+
+#Change the directory to location saved on device
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = '/Users/christiandejong/Library/CloudStorage/OneDrive-cord.edu/University/Fall 2023/Math 335/Projects/Final Project/Models')
+
+
 ```
 
-### VQ Transportation Triangle Mini Model
+### Read in Excel File
+
+```{r}
+
+#pallet weight matrix
+palletWeights <- read_excel("transportation_inputs.xlsx", sheet = "weights")
+palletWeights$Weight <- as.numeric(palletWeights$Weight)
+palletWeights$VolumePerPallet <- as.numeric(palletWeights$VolumePerPallet)
+trailerWeight <- palletWeights$Weight[6] #max trailer weight
+
+#product volume matrix
+productVolume <- read_excel("transportation_inputs.xlsx", sheet = "volume")
+productVolume$Volume <- as.numeric(productVolume$Volume)
+
+#truck capacity matrix
+truckCapacity <- read_excel("transportation_inputs.xlsx", sheet = "capacity")
+truckCapacity$Capacity <- as.numeric(truckCapacity$Capacity)
+trailerPalletsTotal <- truckCapacity$Capacity[6]
+
+```
+
+### Initiating Counters for Pallets Moved and Setting Up Data Frame
 
 ```{r}
 # Counts Pallets Transported per Product
@@ -22,14 +54,14 @@ nSpaceCraftTrans <- 0
 nGoodPackTrans <- 0
 
 # Product Requirements to be Transported Daily
-lactoseReq <- 88
-WpcReq <- 38
-CheeseReq <- 360
-SpaceCraftReq <- 2
-GoodPackReq <- 2
+lactoseReq <- productVolume$Volume[1]
+WpcReq <- productVolume$Volume[2]
+CheeseReq <- productVolume$Volume[3]
+SpaceCraftReq <- productVolume$Volume[4]
+GoodPackReq <- productVolume$Volume[5]
 
 #Data Frame for each Trip, Number of Pallets, Total Pallets per Trip, Weight per Trip
-transport_df <- data.frame(Trip = integer(),
+volume_df <- data.frame(Trip = integer(),
                            Lactose_Pallets = integer(),
                            WPC_Pallets = integer(),
                            Cheese_Pallets = integer(),
@@ -37,7 +69,11 @@ transport_df <- data.frame(Trip = integer(),
                            AMF_Good_Pack_Pallets = integer(),
                            Total_Pallets = integer(),
                            Total_Weight = integer())
+
+
 ```
+
+### Optimization of Trailer Volume
 
 ```{r}
 #Counter for each trip iteration
@@ -48,33 +84,50 @@ while (nLactosePalletsTrans != lactoseReq || nWpcTrans != WpcReq || nCheeseTrans
   
   #Create Constraint Matrix 
   # Variable Order: x1, x2, x3, x4, x5 -- corresponding to: Lactose, WPC, Cheese, AMF Space Craft, AMF Good Pack
-  A <- matrix(c(2200, 1763, 720, 2000, 2670, # Weight Constraint per pallet
-              45, 45, 45, 45, 45, # Volume of Trailer Constraint
-              1, 0, 0, 0, 0, # Max pallets per trailer by product
-              0, 1, 0, 0, 0,
-              0, 0, 1, 0, 0,
-              0, 0, 0, 1, 0,
-              0, 0, 0, 0, 1,
+  A <- matrix(c(palletWeights$Weight[1], palletWeights$Weight[2], palletWeights$Weight[3], palletWeights$Weight[4], palletWeights$Weight[5], # Weight Constraint per pallet
+                
+                1, 1, 1, 1, 1, #Max pallets per trailer constrait assuming pallets are equal dimensions and max pallets by product and volume are the same 
+                
+# Max pallets per trailer constraint if volume of pallets differ and max pallets per trailer by product differ as well - not accounting for weight of pallets
+              
+              # palletWeights$VolumePerPallet[1], palletWeights$VolumePerPallet[2], palletWeights$VolumePerPallet[3], palletWeights$VolumePerPallet[4], palletWeights$VolumePerPallet[5], # Volume of Trailer Constraint
+              # 1, 0, 0, 0, 0, # Max pallets per trailer by product
+              # 0, 1, 0, 0, 0,
+              # 0, 0, 1, 0, 0,
+              # 0, 0, 0, 1, 0,
+              # 0, 0, 0, 0, 1,
+              
               1, 0, 0, 0, 0, # Daily Requirement Constraints
               0, 1, 0, 0, 0,
               0, 0, 1, 0, 0,
               0, 0, 0, 1, 0,
               0, 0, 0, 0, 1), 
-            byrow = TRUE, nrow = 12, ncol = 5)
+            byrow = TRUE, nrow = 7, ncol = 5) # change nrow = 12 if changes above are made
+  
   
   cost <- c(1, 1, 1, 1, 1)
-  rhs <- c(50730, 1067, 20, 24, 13.5, 19, 15, lactoseReq - nLactosePalletsTrans, WpcReq - nWpcTrans, CheeseReq - nCheeseTrans, SpaceCraftReq - nSpaceCraftTrans, GoodPackReq - nGoodPackTrans)
-  dir.const <- c("<=","<=","<=","<=","<=","<=","<=","<=","<=","<=","<=","<=")
+  rhs <- c(trailerWeight, 
+           # Comment out if pallets per trailer is not constant by product
+           trailerPalletsTotal, 
+           #Uncomment if capacity per trailer differs by product type
+           # truckCapacity$Capacity[1], truckCapacity$Capacity[2], truckCapacity$Capacity[3], truckCapacity$Capacity[4], truckCapacity$Capacity[5], 
+           lactoseReq - nLactosePalletsTrans, WpcReq - nWpcTrans, CheeseReq - nCheeseTrans, SpaceCraftReq - nSpaceCraftTrans, GoodPackReq - nGoodPackTrans)
+  dir.const <- c("<=","<=",
+                 
+                 # Uncomment if capacity per trailer differs by product type
+                 # "<=","<=","<=","<=","<=",
+                 
+                 "<=","<=","<=","<=","<=")
 
   # Maximizing Volume of the Trailer for optimal transportation of Products
   lp_solution <- lp(direction = "max", objective.in = cost, const.mat = A, const.dir = dir.const, const.rhs = rhs, all.int = TRUE)
   
   # Calculates Weight of amount of each product in each trailer iteration
-  Lactose_Weight = lp_solution$solution[1] * 2200
-  WPC_Weight = lp_solution$solution[2] * 1763
-  Cheese_Weight = lp_solution$solution[3] * 720
-  AMF_Space_Craft_Weight = lp_solution$solution[4] * 2000
-  AMF_Good_Pack_Weight = lp_solution$solution[5] * 2670
+  Lactose_Weight = lp_solution$solution[1] * palletWeights$Weight[1]
+  WPC_Weight = lp_solution$solution[2] * palletWeights$Weight[2]
+  Cheese_Weight = lp_solution$solution[3] * palletWeights$Weight[3]
+  AMF_Space_Craft_Weight = lp_solution$solution[4] * palletWeights$Weight[4]
+  AMF_Good_Pack_Weight = lp_solution$solution[5] * palletWeights$Weight[5]
   
   # Creates new row with lp_solution outputs and appends it to the data frame
   new_row <- data.frame(Trip = i,
@@ -86,7 +139,7 @@ while (nLactosePalletsTrans != lactoseReq || nWpcTrans != WpcReq || nCheeseTrans
                         Total_Pallets = lp_solution$solution[1] + lp_solution$solution[2] + lp_solution$solution[3] + lp_solution$solution[4] + lp_solution$solution[5],
                         Total_Weight = Lactose_Weight + WPC_Weight + Cheese_Weight + AMF_Space_Craft_Weight + AMF_Good_Pack_Weight)
 
-  transport_df <- rbind(transport_df, new_row)
+  volume_df <- rbind(volume_df, new_row)
   
   #Trips + 1
   i <- i + 1
@@ -98,5 +151,473 @@ while (nLactosePalletsTrans != lactoseReq || nWpcTrans != WpcReq || nCheeseTrans
   nSpaceCraftTrans <- nSpaceCraftTrans + lp_solution$solution[4]
   nGoodPackTrans <- nGoodPackTrans + lp_solution$solution[5]
 }
-transport_df
 ```
+
+### Defining Variables and Arrays for Transportation Optimization
+
+```{r}
+#define queues
+num_drivers <- 2
+num_trailers <- 3
+prod_bays <- 1
+dc_bays <- 1
+
+load_time <- 20
+transport_time <- 15
+
+queue_prod <- character(0)
+idle_prod <- character(0)
+
+prod_status <- character(0)
+dc_status <- character(0)
+
+prod_time <- numeric(0)
+dc_time <- numeric(0)
+
+queue_dc <- character(0)
+idle_dc <- character(0)
+
+prod_to_dc <- character(0)
+dc_to_prod <- character(0)
+
+prod_to_dc_time <- numeric(0)
+dc_to_prod_time <- numeric(0)
+
+idle_prod <- c("T1", "T2", "D1")
+idle_dc <- c("T3", "D2")
+time <- 0 
+trailers_moved <- 0
+trailers_sent <- length(grep("^T", idle_prod))
+trailers_required <- as.numeric(nrow(volume_df))
+
+schedule_df <- data.frame(start_time = double(),
+                          end_time = double(),
+                          entity = character(),
+                          status = character())
+
+
+```
+
+### Define Functions
+
+```{r}
+#Functions 
+move_to_prod_to_dc <- function(trailer, driver) {
+  
+  #add trailer and truck to prod_to_dc
+  prod_to_dc <<- c(prod_to_dc, trailer)
+  prod_to_dc <<- c(prod_to_dc, driver)
+  
+  prod_to_dc_time <<- c(prod_to_dc_time, time + transport_time, time + transport_time)
+  
+  #remove trailer and truck from prod_idle
+  idle_prod <<- idle_prod[-which(idle_prod == trailer)]
+  idle_prod <<- idle_prod[-which(idle_prod == driver)]
+  
+  status_update_trailer <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = trailer,
+                              status = "in transit to dc")
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = driver,
+                              status = "in transit to dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+move_to_queue_dc <- function(trailer, driver) {
+    
+    #add trailer to dc queue & driver to dc idle
+    queue_dc <<- c(queue_dc, trailer)
+    idle_dc <<- c(idle_dc, driver)
+    
+    #remove trailer and truck from prod_to_dc
+    prod_to_dc_time <<- prod_to_dc_time[-which(prod_to_dc == trailer)]
+    prod_to_dc <<- prod_to_dc[-which(prod_to_dc == trailer)]
+    prod_to_dc_time <<- prod_to_dc_time[-which(prod_to_dc == driver)]
+    prod_to_dc <<- prod_to_dc[-which(prod_to_dc == driver)]
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = NA,
+                              entity = trailer,
+                              status = "queued at dc")
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = NA,
+                              entity = driver,
+                              status = "idle at dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+driver_prod_to_idle_dc <- function(driver) {
+  idle_dc <<- c(idle_dc, driver)
+  
+  prod_to_dc_time <<- prod_to_dc_time[-which(prod_to_dc == driver)]
+  prod_to_dc <<- prod_to_dc[-which(prod_to_dc == driver)]
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = NA,
+                              entity = driver,
+                              status = "idle at dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+driver_dc_to_idle_prod <- function(driver) {
+  
+  idle_prod <<- c(idle_prod, driver)
+  
+  dc_to_prod_time <<- dc_to_prod_time[-which(dc_to_prod == driver)]
+  dc_to_prod <<- dc_to_prod[-which(dc_to_prod == driver)]
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = NA,
+                              entity = driver,
+                              status = "idle at prod")
+  
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+move_to_dc_status <- function(trailer) {
+    
+    dc_status <<- c(dc_status, trailer)
+    dc_time <<- c(dc_time, time+load_time)
+    queue_dc <<- queue_dc[-which(queue_dc == trailer)]
+    
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time + load_time,
+                              entity = trailer,
+                              status = "unloading at dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+  
+}
+
+move_to_idle_dc <- function(trailer) {
+    
+    idle_dc <<- c(idle_dc, trailer)
+    dc_time <<- dc_time[-which(dc_status == trailer)]
+    dc_status <<- dc_status[-which(dc_status == trailer)]
+    dc_bays <<- dc_bays + 1
+    trailers_moved <<- trailers_moved + 1
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time,
+                              entity = trailer,
+                              status = "idle at dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+}
+ 
+move_to_dc_to_prod <- function(trailer, driver) {
+  
+    #add trailer and truck to dc_to_prod
+    dc_to_prod <<- c(dc_to_prod, trailer)
+    dc_to_prod <<- c(dc_to_prod, driver)
+    
+    #remove trailer and truck from prod_idle
+    idle_dc <<- idle_dc[-which(idle_dc == trailer)]
+    idle_dc <<- idle_dc[-which(idle_dc == driver)]
+    
+    dc_to_prod_time <<- c(dc_to_prod_time, time + transport_time, time + transport_time)
+  
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = trailer,
+                              status = "in transit to prod")
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = driver,
+                              status = "in transit to prod")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+move_to_queue_prod <- function(trailer, driver) {
+    #add trailer to dc queue & driver to dc idle
+    queue_prod <<- c(queue_prod, trailer)
+    idle_prod <<- c(idle_prod, driver)
+    
+    #remove trailer and truck from dc_to_prod
+    dc_to_prod_time <<- dc_to_prod_time[-which(dc_to_prod == trailer)]
+    dc_to_prod <<- dc_to_prod[-which(dc_to_prod == trailer)]
+    dc_to_prod_time <<- dc_to_prod_time[-which(dc_to_prod == driver)]
+    dc_to_prod <<- dc_to_prod[-which(dc_to_prod == driver)]
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time,
+                              entity = trailer,
+                              status = "queued at prod")
+  
+    status_update_driver <- data.frame(start_time = time,
+                              end_time = time,
+                              entity = driver,
+                              status = "idle at prod")
+  
+    schedule_df <<- rbind(schedule_df, status_update_trailer)
+    schedule_df <<- rbind(schedule_df, status_update_driver)
+}
+
+move_to_prod_status <- function(trailer) {
+    
+    prod_status <<- c(prod_status, trailer)
+    prod_time <<- c(prod_time, time+load_time)
+    queue_prod <<- queue_prod[-which(queue_prod == trailer)]
+    
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time + load_time,
+                              entity = trailer,
+                              status = "loading at prod")
+  
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+}
+
+move_to_idle_prod <- function(trailer) {
+    
+    idle_prod <<- c(idle_prod, trailer)
+    prod_time <<- prod_time[-which(prod_status == trailer)]
+    prod_status <<- prod_status[-which(prod_status == trailer)]
+    prod_bays <<- prod_bays + 1
+    trailers_sent <<- trailers_sent + 1
+    
+    status_update_trailer <- data.frame(start_time = time,
+                              end_time = time,
+                              entity = trailer,
+                              status = "idle at prod")
+
+  schedule_df <<- rbind(schedule_df, status_update_trailer)
+
+}
+
+driver_prod_to_dc <- function(driver) {
+  
+  prod_to_dc <<- c(prod_to_dc, driver)
+  idle_prod <<- idle_prod[-which(idle_prod == driver)]
+  
+  prod_to_dc_time <<- c(prod_to_dc_time, time + transport_time)
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = driver,
+                              status = "in transit to dc")
+  
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+  
+}
+
+driver_dc_to_prod <- function(driver) {
+  
+  dc_to_prod <<- c(dc_to_prod, driver)
+  idle_dc <<- idle_dc[-which(idle_dc == driver)]
+  
+  dc_to_prod_time <<- c(dc_to_prod_time, time + transport_time)
+  
+  status_update_driver <- data.frame(start_time = time,
+                              end_time = time + transport_time,
+                              entity = driver,
+                              status = "in transit to prod")
+  
+  schedule_df <<- rbind(schedule_df, status_update_driver)
+  
+}
+
+
+```
+
+### Conditional statements for Action
+
+```{r}
+check_again <- FALSE
+
+
+while (trailers_moved < trailers_required) {
+  
+  #loop through idle_prod 
+  for (item in idle_prod) {
+    if (grepl("^T", item)) { #if item is a trailer, check for available drivers
+      for (potential_driver in idle_prod) {
+        if (grepl("^D", potential_driver)) { #if item is a driver, call move_to_prod_to_dc for trailer, driver combination
+          move_to_prod_to_dc(item, potential_driver)
+          break
+        }
+      }
+    # } else if (grepl("^D", item) && (!any(grepl("^D", prod_to_dc))) && (!any(grepl("^T", idle_prod)))) {
+    #   trailers_loading_at_dc <- length(dc_status)
+    #   trailers_waiting_idle_dc <- length(grepl("^T", idle_dc))
+    #   if (trailers_waiting_idle_dc > 0 || trailers_loading_at_dc > 0){
+    #     driver_prod_to_dc(item)
+    #     print("D alone to dc works")
+    #  }
+    }
+  }
+  
+  #loop through prod_to_dc
+  if(length(prod_to_dc) > 0) {
+    for (item_num in 1:length(prod_to_dc)) {
+      if (grepl("^T", prod_to_dc[item_num]) && (prod_to_dc_time[item_num] <= time)) { #if item is a trailer, check for available drivers
+        for (potential_driver in prod_to_dc) {
+          if (grepl("^D", potential_driver)) { #if item is a driver, call move_to_queue_dc for trailer, driver combination
+            move_to_queue_dc(prod_to_dc[item_num], potential_driver)
+            break
+          }
+        }
+      # } else if (grepl("^D", prod_to_dc[item_num]) && (prod_to_dc_time[item_num] <= time) && (!any(grepl("^T", prod_to_dc)))) {
+      #   driver_prod_to_idle_dc(prod_to_dc[item_num])
+      #   break
+      }
+    }
+  }
+  
+  #loop for queue_dc
+  for (item in queue_dc) {
+    if (dc_bays > 0) { #if dc has a bay available
+      move_to_dc_status(item)
+      dc_bays <<- dc_bays - 1 
+    }
+  }
+  
+  #loop for dc_status
+  if(length(dc_status) > 0) {
+    for (item_num in 1:length(dc_status)) {
+      if (dc_time[item_num] <= time) {
+        check_agian <- TRUE
+        move_to_idle_dc(dc_status[item_num])
+      }
+    }
+  }
+  
+###############################################
+  #loop through idle_dc 
+  for (item in idle_dc) {
+    if (grepl("^T", item)) { #if item is a trailer, check for available drivers
+      for (potential_driver in idle_dc) {
+        if (grepl("^D", potential_driver)) { #if item is a driver, call move_to_dc_to_prod for trailer, driver combination
+          move_to_dc_to_prod(item, potential_driver)
+          break
+        } 
+      }
+    # } else if (grepl("^D", item) && (!any(grepl("^D", dc_to_prod))) && (!any(grepl("^T", idle_dc)))) {
+    #       trailers_loading_at_prod <- length(prod_status)
+    #       trailers_waiting_idle_prod <- length(grepl("^T", idle_prod))
+    #       if (trailers_waiting_idle_prod > 0 || trailers_loading_at_prod > 0){
+    #         driver_dc_to_prod(item)
+    #         break
+    #       }
+        }
+  }
+  
+  #loop for dc_to_prod
+  if(length(dc_to_prod) > 0) {
+    for (item_num in 1:length(dc_to_prod)) {
+      if (grepl("^T", dc_to_prod[item_num]) && (dc_to_prod_time[item_num] <= time)) { #if item is a trailer, check the drivers
+        for (potential_driver in dc_to_prod) {
+          if (grepl("^D", potential_driver)) { #if item is a driver, call move_to_queue_prod for trailer, driver combination
+            move_to_queue_prod(dc_to_prod[item_num], potential_driver)
+            break
+          }
+        }
+      # } else if (grepl("^D", dc_to_prod[item_num]) && (dc_to_prod_time[item_num] <= time) && (!any(grepl("^T", dc_to_prod)))) {
+      #   driver_dc_to_idle_prod(dc_to_prod[item_num])
+      #   break
+      # }
+    }
+  }
+  }
+  
+  #loop for queue_prod
+  for (item in queue_prod) {
+    if (prod_bays > 0 & trailers_sent < trailers_required) { #if prod has a bay available
+      move_to_prod_status(item)
+      prod_bays <<- prod_bays - 1
+    }
+  }
+  
+  #loop for prod_status
+  if(length(prod_status) >0) {
+    for (item_num in 1:length(prod_status)) {
+      if (prod_time[item_num] <= time) {
+        check_agian <- TRUE
+        move_to_idle_prod(prod_status[item_num])
+      }
+    }
+  }
+  
+  #loop through idle_prod 
+  for (item in idle_prod) {
+    if (grepl("^T", item)) { #if item is a trailer, check for available drivers
+      for (potential_driver in idle_prod) {
+        if (grepl("^D", potential_driver)) { #if item is a driver, call move_to_prod_to_dc for trailer, driver combination
+          move_to_prod_to_dc(item, potential_driver)
+          break
+        }
+      }
+    # } else if (grepl("^D", item) && (!any(grepl("^D", prod_to_dc))) && (!any(grepl("^T", idle_prod)))) {
+    #   trailers_loading_at_dc <- length(dc_status)
+    #   trailers_waiting_idle_dc <- length(grepl("^T", idle_dc))
+    #   if (trailers_waiting_idle_dc > 0 || trailers_loading_at_dc > 0){
+    #     driver_prod_to_dc(item)
+    #     print("D alone to dc works")
+    #   }
+    }
+  }
+  
+  if (check_again) {
+    check_again <- FALSE
+  } else {
+    time <- min(prod_time, dc_time, prod_to_dc_time, dc_to_prod_time)
+  }
+  
+  
+  
+}
+
+
+```
+
+```{r}
+driver1_df <- filter(schedule_df, entity == "D1")
+driver2_df <- filter(schedule_df, entity == "D2")
+trailer1_df <- filter(schedule_df, entity == "T1")
+trailer2_df <- filter(schedule_df, entity == "T2")
+trailer3_df <- filter(schedule_df, entity == "T3")
+
+```
+
+```{r}
+schedule_df$status <- as.factor(schedule_df$status)
+schedule_df$entity <- as.factor(schedule_df$entity)
+
+# Create the line plot
+ggplot(schedule_df, aes(x = start_time, y = status, group = entity, color = entity)) +
+  geom_line() +
+  labs(x = "Start Time", y = "Status", color = "Entity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(hjust = 1)) 
+```
+
+```{r}
+trailer3_df <- filter(schedule_df, entity %in% c("T3","D2","D1"))
+trailer3_df <- filter(trailer3_df, start_time <= 200)
+
+trailer3_df$status <- as.factor(trailer3_df$status)
+
+
+# Create the line plot for entity "T1"
+ggplot(trailer3_df, aes(x = start_time, y = status, group = entity, color = entity)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Start Time", y = "Status", color = "Entity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
