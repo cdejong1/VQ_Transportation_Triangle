@@ -1,6 +1,6 @@
 Valley Queen Transportation Optimization Project
 
-Valley Queen: https://www.valleyqueen.com/
+https://www.valleyqueen.com/
 
 Project Overview
 
